@@ -29,20 +29,23 @@ public class SpeechManager {
     }
 
     private void initSpeechRecognizer() {
-        // SpeechRecognizer must be created on the Main Thread
         new Handler(Looper.getMainLooper()).post(() -> {
+            if (speechRecognizer != null) {
+                speechRecognizer.destroy();
+            }
+
             if (SpeechRecognizer.isRecognitionAvailable(context)) {
                 speechRecognizer = SpeechRecognizer.createSpeechRecognizer(context);
                 speechRecognizer.setRecognitionListener(new RecognitionListener() {
                     @Override
                     public void onReadyForSpeech(Bundle params) {
-                        Log.d(TAG, "onReadyForSpeech");
+                        Log.d(TAG, "Ready for speech");
                         isListening.postValue(true);
                     }
 
                     @Override
                     public void onBeginningOfSpeech() {
-                        Log.d(TAG, "onBeginningOfSpeech");
+                        Log.d(TAG, "Speech beginning");
                     }
 
                     @Override
@@ -53,18 +56,20 @@ public class SpeechManager {
 
                     @Override
                     public void onEndOfSpeech() {
-                        Log.d(TAG, "onEndOfSpeech");
+                        Log.d(TAG, "Speech end");
                         isListening.postValue(false);
                     }
 
                     @Override
                     public void onError(int error) {
                         String message = getErrorText(error);
-                        Log.e(TAG, "onError: " + message);
+                        Log.e(TAG, "Error: " + message);
                         isListening.postValue(false);
-                        // Only show error if it's not a "no match" during active listening
-                        if (error != SpeechRecognizer.ERROR_NO_MATCH) {
-                             recognizedText.postValue("Error: " + message);
+                        
+                        if (error == SpeechRecognizer.ERROR_NO_MATCH) {
+                            recognizedText.postValue("Didn't catch that. Try again?");
+                        } else {
+                            recognizedText.postValue("Error: " + message);
                         }
                     }
 
@@ -72,6 +77,7 @@ public class SpeechManager {
                     public void onResults(Bundle results) {
                         ArrayList<String> matches = results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
                         if (matches != null && !matches.isEmpty()) {
+                            Log.d(TAG, "Result: " + matches.get(0));
                             recognizedText.postValue(matches.get(0));
                         }
                         isListening.postValue(false);
@@ -89,7 +95,8 @@ public class SpeechManager {
                     public void onEvent(int eventType, Bundle params) { }
                 });
             } else {
-                recognizedText.postValue("Speech Recognition not available");
+                Log.e(TAG, "Speech recognition not available");
+                recognizedText.postValue("Speech Recognition not available on this device.");
             }
         });
     }
@@ -104,17 +111,22 @@ public class SpeechManager {
 
     public void startListening() {
         new Handler(Looper.getMainLooper()).post(() -> {
-            if (speechRecognizer != null) {
-                Intent intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
-                intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
-                intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-IN");
-                intent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
-                
-                try {
-                    speechRecognizer.startListening(intent);
-                } catch (Exception e) {
-                    Log.e(TAG, "Failed to start listening", e);
-                }
+            if (speechRecognizer == null) {
+                initSpeechRecognizer();
+            }
+
+            Intent intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+            intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
+            intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-IN");
+            intent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
+            intent.putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, context.getPackageName());
+            
+            try {
+                speechRecognizer.startListening(intent);
+                recognizedText.postValue(""); // Clear previous text
+            } catch (Exception e) {
+                Log.e(TAG, "Failed to start listening", e);
+                recognizedText.postValue("Failed to start microphone.");
             }
         });
     }
@@ -123,8 +135,8 @@ public class SpeechManager {
         new Handler(Looper.getMainLooper()).post(() -> {
             if (speechRecognizer != null) {
                 speechRecognizer.stopListening();
-                isListening.postValue(false);
             }
+            isListening.postValue(false);
         });
     }
 
@@ -132,21 +144,23 @@ public class SpeechManager {
         switch (errorCode) {
             case SpeechRecognizer.ERROR_AUDIO: return "Audio recording error";
             case SpeechRecognizer.ERROR_CLIENT: return "Client side error";
-            case SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS: return "Insufficient permissions";
+            case SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS: return "Missing microphone permission";
             case SpeechRecognizer.ERROR_NETWORK: return "Network error";
             case SpeechRecognizer.ERROR_NETWORK_TIMEOUT: return "Network timeout";
-            case SpeechRecognizer.ERROR_NO_MATCH: return "No match found";
-            case SpeechRecognizer.ERROR_RECOGNIZER_BUSY: return "RecognitionService busy";
+            case SpeechRecognizer.ERROR_NO_MATCH: return "No speech match found";
+            case SpeechRecognizer.ERROR_RECOGNIZER_BUSY: return "Recognition service busy";
             case SpeechRecognizer.ERROR_SERVER: return "Server error";
             case SpeechRecognizer.ERROR_SPEECH_TIMEOUT: return "No speech input";
-            default: return "Unknown error";
+            default: return "Unknown error (" + errorCode + ")";
         }
     }
 
     public void destroy() {
-        if (speechRecognizer != null) {
-            speechRecognizer.destroy();
-            speechRecognizer = null;
-        }
+        new Handler(Looper.getMainLooper()).post(() -> {
+            if (speechRecognizer != null) {
+                speechRecognizer.destroy();
+                speechRecognizer = null;
+            }
+        });
     }
 }

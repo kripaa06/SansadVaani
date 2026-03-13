@@ -13,7 +13,6 @@ import androidx.compose.ui.unit.dp
 import com.example.parliamentvoiceapp.ui.components.MicButton
 import com.example.parliamentvoiceapp.ui.components.ResponseCard
 import com.example.parliamentvoiceapp.ui.components.TopBar
-import com.example.parliamentvoiceapp.ui.components.WaveAnimation
 import com.example.parliamentvoiceapp.ui.theme.ParliamentAppTheme
 import com.example.parliamentvoiceapp.viewmodel.VoiceViewModel
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
@@ -83,7 +82,7 @@ fun PermissionDeniedContent(onRequestPermission: () -> Unit) {
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Text(text = "Microphone permission is required to use voice features.")
+        Text(text = "Microphone permission is required to use voice features.", color = MaterialTheme.colorScheme.onBackground)
         Spacer(modifier = Modifier.height(12.dp))
         Button(onClick = onRequestPermission) {
             Text(text = "Grant Permission")
@@ -112,22 +111,23 @@ fun VoiceRecognitionUI(
         ) {
             ResponseCard(
                 title = "Recognized Text",
-                content = recognizedText.ifEmpty { "Speak something..." }
+                content = recognizedText.ifEmpty { if (isListening) "Listening..." else "Tap mic to speak" }
             )
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(60.dp))
 
-            WaveAnimation(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(80.dp),
-                waveColor = MaterialTheme.colorScheme.primary,
-                amplitude = if (isListening) 40f else 5f
-            )
-
-            Spacer(modifier = Modifier.height(40.dp))
+            // WaveAnimation removed as requested
 
             MicButton(onClick = onMicClicked)
+            
+            if (isListening) {
+                Spacer(modifier = Modifier.height(16.dp))
+                Text(
+                    text = "Listening...",
+                    color = MaterialTheme.colorScheme.primary,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
         }
     }
 }
