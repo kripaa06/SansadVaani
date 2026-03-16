@@ -83,10 +83,13 @@ private fun VoiceSessionUI(
     onMicClicked: () -> Unit,
     onBack: () -> Unit
 ) {
+    val isError = recognizedText.startsWith("Error") || recognizedText.startsWith("Didn't catch")
+    
     // Status label targets
     val statusText = when {
         isListening && recognizedText.isEmpty() -> "Listening…"
         isListening                             -> "Keep speaking…"
+        isError                                 -> "Recognition failed"
         recognizedText.isNotEmpty()             -> "Transcription complete"
         else                                    -> "Tap the orb or mic to speak"
     }
@@ -169,7 +172,7 @@ private fun VoiceSessionUI(
                 Text(
                     text = text,
                     style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
-                    color = if (isListening) TextAccent else TextMuted,
+                    color = if (isError) MaterialTheme.colorScheme.error else if (isListening) TextAccent else TextMuted,
                     letterSpacing = 0.8.sp,
                     textAlign = TextAlign.Center,
                     modifier = Modifier.fillMaxWidth()
