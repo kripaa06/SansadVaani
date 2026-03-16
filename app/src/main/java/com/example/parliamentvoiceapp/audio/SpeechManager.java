@@ -22,6 +22,7 @@ public class SpeechManager {
     private final Context context;
     private final MutableLiveData<String> recognizedText = new MutableLiveData<>("");
     private final MutableLiveData<Boolean> isListening = new MutableLiveData<>(false);
+    private final MutableLiveData<Float> rmsDb = new MutableLiveData<>(0f);
 
     public SpeechManager(@NonNull Context context) {
         this.context = context;
@@ -49,7 +50,11 @@ public class SpeechManager {
                     }
 
                     @Override
-                    public void onRmsChanged(float rmsdB) { }
+                    public void onRmsChanged(float rmsdB) {
+                        // Clamp to 0..12 range for normalisation in the UI
+                        float clamped = Math.max(0f, Math.min(rmsdB, 12f));
+                        rmsDb.postValue(clamped);
+                    }
 
                     @Override
                     public void onBufferReceived(byte[] buffer) { }
@@ -58,6 +63,7 @@ public class SpeechManager {
                     public void onEndOfSpeech() {
                         Log.d(TAG, "Speech end");
                         isListening.postValue(false);
+                        rmsDb.postValue(0f);
                     }
 
                     @Override
@@ -65,7 +71,7 @@ public class SpeechManager {
                         String message = getErrorText(error);
                         Log.e(TAG, "Error: " + message);
                         isListening.postValue(false);
-                        
+                        rmsDb.postValue(0f);
                         if (error == SpeechRecognizer.ERROR_NO_MATCH) {
                             recognizedText.postValue("Didn't catch that. Try again?");
                         } else {
@@ -81,6 +87,7 @@ public class SpeechManager {
                             recognizedText.postValue(matches.get(0));
                         }
                         isListening.postValue(false);
+                        rmsDb.postValue(0f);
                     }
 
                     @Override
@@ -107,6 +114,10 @@ public class SpeechManager {
 
     public LiveData<Boolean> getIsListening() {
         return isListening;
+    }
+
+    public LiveData<Float> getRmsDb() {
+        return rmsDb;
     }
 
     public void startListening() {

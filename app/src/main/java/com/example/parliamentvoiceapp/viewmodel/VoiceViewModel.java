@@ -67,6 +67,10 @@ public class VoiceViewModel extends AndroidViewModel {
         return speechManager.getIsListening();
     }
 
+    public LiveData<Float> getRmsDb() {
+        return speechManager.getRmsDb();
+    }
+
     public void startListening() {
         speechManager.startListening();
     }
