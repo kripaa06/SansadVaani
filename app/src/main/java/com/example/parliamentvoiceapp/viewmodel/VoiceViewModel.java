@@ -8,6 +8,7 @@ import androidx.lifecycle.MutableLiveData;
 import com.example.parliamentvoiceapp.audio.SpeechManager;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 public class VoiceViewModel extends AndroidViewModel {
@@ -31,9 +32,13 @@ public class VoiceViewModel extends AndroidViewModel {
 
         // Observe recognized text and autocorrect it
         speechManager.getRecognizedText().observeForever(text -> {
-            if (text != null && !text.isEmpty()) {
-                String autoCorrected = autocorrect(text);
-                correctedText.postValue(autoCorrected);
+            if (text != null) {
+                if (text.isEmpty()) {
+                    correctedText.postValue("");
+                } else {
+                    String autoCorrected = autocorrect(text);
+                    correctedText.postValue(autoCorrected);
+                }
             }
         });
     }
@@ -59,8 +64,48 @@ public class VoiceViewModel extends AndroidViewModel {
         return corrected.toString().trim();
     }
 
+    public static class ChatMessage {
+        public String text;
+        public boolean isUser;
+        public ChatMessage(String text, boolean isUser) {
+            this.text = text;
+            this.isUser = isUser;
+        }
+    }
+
+    private MutableLiveData<List<ChatMessage>> chatHistory = new MutableLiveData<>(new java.util.ArrayList<>());
+
+    public LiveData<List<ChatMessage>> getChatHistory() {
+        return chatHistory;
+    }
+
+    public void submitQuery(String query) {
+        if (query == null || query.trim().isEmpty()) return;
+        List<ChatMessage> currentList = new java.util.ArrayList<>(chatHistory.getValue());
+        currentList.add(new ChatMessage(query, true));
+        chatHistory.postValue(currentList);
+        
+        // Clear the current input text since it's already sent
+        correctedText.postValue("");
+        
+        // Simulating the fixed AI response after a short delay
+        new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
+            List<ChatMessage> updatedList = new java.util.ArrayList<>(chatHistory.getValue());
+            updatedList.add(new ChatMessage("Thank you for your parliamentary inquiry. I am the Parliament Voice Assistant. I will provide a detailed, context-aware political AI response once my backend is fully connected.", false));
+            chatHistory.postValue(updatedList);
+        }, 1000);
+    }
+
+    public void clearChat() {
+        chatHistory.postValue(new java.util.ArrayList<>());
+    }
+
     public LiveData<String> getCorrectedText() {
         return correctedText;
+    }
+
+    public void updateText(String newText) {
+        correctedText.postValue(newText);
     }
 
     public LiveData<Boolean> getIsListening() {
