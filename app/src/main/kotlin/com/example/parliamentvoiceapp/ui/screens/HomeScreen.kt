@@ -3,12 +3,14 @@ package com.example.parliamentvoiceapp.ui.screens
 import android.Manifest
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -16,8 +18,10 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.*
@@ -27,12 +31,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.parliamentvoiceapp.ui.components.*
@@ -41,6 +44,7 @@ import com.example.parliamentvoiceapp.viewmodel.VoiceViewModel
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.isGranted
 import com.google.accompanist.permissions.rememberPermissionState
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalPermissionsApi::class)
 class HomeScreen : ComponentActivity() {
@@ -56,15 +60,23 @@ class HomeScreen : ComponentActivity() {
     }
 }
 
-@OptIn(ExperimentalPermissionsApi::class)
+@OptIn(ExperimentalPermissionsApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreenContent(viewModel: VoiceViewModel) {
     val micPerm = rememberPermissionState(Manifest.permission.RECORD_AUDIO)
     val isListening by viewModel.isListening.observeAsState(false)
     val recognizedText by viewModel.correctedText.observeAsState("")
     val rmsDb by viewModel.rmsDb.observeAsState(0f)
-    val chatHistoryState = viewModel.chatHistory.observeAsState(emptyList<VoiceViewModel.ChatMessage>())
-    val chatHistory = (chatHistoryState.value as? List<VoiceViewModel.ChatMessage>) ?: emptyList()
+    val chatHistory by viewModel.chatHistory.observeAsState(emptyList())
+    val allSessions by viewModel.allSessions.observeAsState(emptyList())
+    
+    val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
+    val scope = rememberCoroutineScope()
+
+    // Handle system back press
+    BackHandler(enabled = chatHistory.isNotEmpty()) {
+        viewModel.clearChat()
+    }
 
     LaunchedEffect(Unit) {
         if (!micPerm.status.isGranted) {
@@ -75,24 +87,108 @@ fun HomeScreenContent(viewModel: VoiceViewModel) {
     if (!micPerm.status.isGranted) {
         PermissionScreen { micPerm.launchPermissionRequest() }
     } else {
-        MainChatContainer(
-            chatHistory = chatHistory,
-            isListening = isListening,
-            recognizedText = recognizedText,
-            rmsDb = rmsDb,
-            onTextChanged = { viewModel.updateText(it) },
-            onMicClicked = {
-                if (isListening) viewModel.stopListening()
-                else viewModel.startListening()
-            },
-            onSendClicked = {
-                if (recognizedText.isNotBlank()) {
-                    if (isListening) viewModel.stopListening()
-                    viewModel.submitQuery(recognizedText)
+        ModalNavigationDrawer(
+            drawerState = drawerState,
+            drawerContent = {
+                ModalDrawerSheet(
+                    drawerContainerColor = DarkBlack,
+                    drawerShape = RoundedCornerShape(topEnd = 24.dp, bottomEnd = 24.dp)
+                ) {
+                    HistoryDrawerContent(
+                        sessions = allSessions,
+                        onSessionSelected = { session ->
+                            viewModel.loadSession(session.id)
+                            scope.launch { drawerState.close() }
+                        },
+                        onNewChat = {
+                            viewModel.startNewSession()
+                            scope.launch { drawerState.close() }
+                        }
+                    )
                 }
-            },
-            onClearChat = { viewModel.clearChat() }
+            }
+        ) {
+            MainChatContainer(
+                chatHistory = chatHistory,
+                isListening = isListening,
+                recognizedText = recognizedText,
+                rmsDb = rmsDb,
+                onTextChanged = { viewModel.updateText(it) },
+                onMicClicked = {
+                    if (isListening) viewModel.stopListening()
+                    else viewModel.startListening()
+                },
+                onSendClicked = {
+                    if (recognizedText.isNotBlank()) {
+                        if (isListening) viewModel.stopListening()
+                        viewModel.submitQuery(recognizedText)
+                    }
+                },
+                onBackClicked = { viewModel.clearChat() },
+                onMenuClicked = { scope.launch { drawerState.open() } }
+            )
+        }
+    }
+}
+
+@Composable
+private fun HistoryDrawerContent(
+    sessions: List<com.example.parliamentvoiceapp.db.ChatSession>,
+    onSessionSelected: (com.example.parliamentvoiceapp.db.ChatSession) -> Unit,
+    onNewChat: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(20.dp)
+    ) {
+        Text(
+            text = "Conversation History",
+            style = MaterialTheme.typography.titleLarge,
+            color = TextPrimary,
+            fontWeight = FontWeight.Bold
         )
+        
+        Spacer(Modifier.height(24.dp))
+        
+        Button(
+            onClick = onNewChat,
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(containerColor = SaffronOrange),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Text("Start New Chat", fontWeight = FontWeight.Bold)
+        }
+        
+        Spacer(Modifier.height(16.dp))
+        
+        LazyColumn(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            items(sessions) { session ->
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(GlassSurface)
+                        .clickable { onSessionSelected(session) }
+                        .padding(16.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.History, contentDescription = null, tint = SaffronOrange, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(12.dp))
+                        Text(
+                            text = session.title,
+                            color = TextSecondary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -105,7 +201,8 @@ private fun MainChatContainer(
     onTextChanged: (String) -> Unit,
     onMicClicked: () -> Unit,
     onSendClicked: () -> Unit,
-    onClearChat: () -> Unit
+    onBackClicked: () -> Unit,
+    onMenuClicked: () -> Unit
 ) {
     Box(
         modifier = Modifier
@@ -116,7 +213,6 @@ private fun MainChatContainer(
                 )
             )
     ) {
-        // Deep background glow adapting to app state
         val bgGlowColor by animateColorAsState(
             targetValue = if (isListening) SaffronOrange.copy(alpha = 0.05f) else MicIdleBlue.copy(alpha = 0.03f),
             animationSpec = tween(1200), label = "bg_glow"
@@ -132,13 +228,12 @@ private fun MainChatContainer(
                 .fillMaxSize()
                 .systemBarsPadding()
         ) {
-            // Header Content
             ChatHeader(
                 showBack = chatHistory.isNotEmpty(),
-                onBackClicked = onClearChat
+                onBackClicked = onBackClicked,
+                onMenuClicked = onMenuClicked
             )
 
-            // Dynamic Content Area (transitions from empty landing page to chat timeline)
             Box(
                 modifier = Modifier
                     .weight(1f)
@@ -153,7 +248,6 @@ private fun MainChatContainer(
                 }
             }
 
-            // Central Wave Animation placed right above the input bar when listening
             AnimatedVisibility(
                 visible = isListening,
                 enter = fadeIn() + expandVertically(),
@@ -172,7 +266,6 @@ private fun MainChatContainer(
             
             Spacer(Modifier.height(8.dp))
 
-            // ChatGPT-Style Input Bar
             InputBar(
                 text = recognizedText,
                 isListening = isListening,
@@ -185,25 +278,20 @@ private fun MainChatContainer(
 }
 
 @Composable
-private fun ChatHeader(showBack: Boolean, onBackClicked: () -> Unit) {
+private fun ChatHeader(showBack: Boolean, onBackClicked: () -> Unit, onMenuClicked: () -> Unit) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 24.dp, vertical = 16.dp),
         contentAlignment = Alignment.Center
     ) {
-        if (showBack) {
-            IconButton(
-                onClick = onBackClicked,
-                modifier = Modifier.align(Alignment.CenterStart)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.ArrowBack,
-                    contentDescription = "Back",
-                    tint = TextSecondary
-                )
-            }
+        IconButton(
+            onClick = onMenuClicked,
+            modifier = Modifier.align(Alignment.CenterStart)
+        ) {
+            Icon(imageVector = Icons.Default.Menu, contentDescription = "Menu", tint = TextPrimary)
         }
+        
         Text(
             text = "Parliament Voice",
             style = MaterialTheme.typography.titleLarge.copy(
@@ -212,13 +300,25 @@ private fun ChatHeader(showBack: Boolean, onBackClicked: () -> Unit) {
             ),
             color = TextPrimary
         )
+
+        if (showBack) {
+            IconButton(
+                onClick = onBackClicked,
+                modifier = Modifier.align(Alignment.CenterEnd)
+            ) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = "Close Chat",
+                    tint = TextSecondary
+                )
+            }
+        }
     }
 }
 
 @Composable
 private fun LandingScreenView(isListening: Boolean, rmsDb: Float) {
     Box(modifier = Modifier.fillMaxSize()) {
-        // ── Background decorative circles ─────────────────────────────────────
         Box(
             modifier = Modifier
                 .offset(x = (-60).dp, y = 80.dp)
@@ -249,7 +349,6 @@ private fun LandingScreenView(isListening: Boolean, rmsDb: Float) {
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
-            // ── Hero tagline ──────────────────────────────────────────────
             Text(
                 text = "Your Voice,",
                 style = MaterialTheme.typography.displayMedium.copy(fontWeight = FontWeight.Light),
@@ -273,7 +372,6 @@ private fun LandingScreenView(isListening: Boolean, rmsDb: Float) {
 
             Spacer(Modifier.height(40.dp))
 
-            // ── Preview VoiceOrb (idle/active) ────────────────────────
             Box(
                 contentAlignment = Alignment.Center,
                 modifier = Modifier.size(240.dp)
@@ -288,7 +386,6 @@ private fun LandingScreenView(isListening: Boolean, rmsDb: Float) {
 
             Spacer(Modifier.height(36.dp))
 
-            // ── Feature cards row ─────────────────────────────────────────
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -329,7 +426,6 @@ private fun FeatureCard(emoji: String, label: String, modifier: Modifier = Modif
 private fun ChatTimelineView(chatHistory: List<VoiceViewModel.ChatMessage>) {
     val listState = rememberLazyListState()
     
-    // Auto-scroll to bottom when new messages arrive
     LaunchedEffect(chatHistory.size) {
         if (chatHistory.isNotEmpty()) {
             listState.animateScrollToItem(chatHistory.size - 1)
@@ -361,7 +457,6 @@ private fun ChatBubble(message: VoiceViewModel.ChatMessage) {
         horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
     ) {
         if (!isUser) {
-            // AI Parliament Avatar
             Box(
                 modifier = Modifier
                     .padding(end = 8.dp)
@@ -442,7 +537,6 @@ private fun InputBar(
 
         Spacer(Modifier.width(8.dp))
 
-        // Dynamic Action Button (Send if text exists, else Mic)
         val hasText = text.isNotBlank()
         
         val buttonColor by animateColorAsState(

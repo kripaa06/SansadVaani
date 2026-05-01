@@ -1,7 +1,10 @@
 package com.example.parliamentvoiceapp.viewmodel
 
 import android.app.Application
-import androidx.lifecycle.*
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.LiveData
+import androidx.lifecycle.MutableLiveData
+import androidx.lifecycle.viewModelScope
 import com.example.parliamentvoiceapp.audio.SpeechManager
 import com.example.parliamentvoiceapp.audio.TTSManager
 import com.example.parliamentvoiceapp.db.AppDatabase
@@ -33,9 +36,6 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     private val _allSessions = MutableLiveData<List<ChatSession>>(emptyList())
     val allSessions: LiveData<List<ChatSession>> = _allSessions
 
-    private val _isBotTyping = MutableLiveData<Boolean>(false)
-    val isBotTyping: LiveData<Boolean> = _isBotTyping
-
     data class ChatMessage(
         val text: String,
         val isUser: Boolean,
@@ -43,12 +43,10 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     )
 
     init {
-        // Use a Lifecycle-aware observer for speech
         speechManager.recognizedText.observeForever { text ->
             if (text != null) _correctedText.postValue(text)
         }
 
-        // Always monitor all sessions for the drawer
         viewModelScope.launch {
             chatDao.getAllSessions().collectLatest {
                 _allSessions.postValue(it)
@@ -56,10 +54,8 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /**
-     * Resets the UI and switches the DB observer to a specific session
-     */
     fun loadSession(sessionId: Long) {
+        // Cancel previous session observation to prevent data mixing
         sessionObservationJob?.cancel()
         currentSessionId = sessionId
         
@@ -77,58 +73,60 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         currentSessionId = null
         _chatHistory.value = emptyList()
         _correctedText.value = ""
-        _isBotTyping.value = false
-        ttsManager.stop()
     }
 
-    /**
-     * Purely Database-Driven Query Submission
-     */
     fun submitQuery(query: String) {
         if (query.isBlank()) return
 
         viewModelScope.launch {
-            // 1. Initialize session if needed
+            // 1. Ensure Session exists
             if (currentSessionId == null) {
                 val newId = chatDao.insertSession(ChatSession(title = query))
+                currentSessionId = newId
+                // Start observing the new session immediately
                 loadSession(newId)
             }
 
             val sessionId = currentSessionId!!
 
-            // 2. Clear input and save user message to DB
-            // The DB observer will automatically add the user bubble to the UI
+            // 2. Immediate UI Update for User Message
+            val updatedListWithUser = (_chatHistory.value ?: emptyList()).toMutableList()
+            updatedListWithUser.add(ChatMessage(query, true))
+            _chatHistory.value = updatedListWithUser
             _correctedText.value = ""
             ttsManager.stop()
-            chatDao.insertMessage(LocalChatMessage(sessionId = sessionId, text = query, isUser = true))
 
-            // 3. Show "Typing" state
-            _isBotTyping.value = true
+            // 3. Background Save
+            launch { chatDao.insertMessage(LocalChatMessage(sessionId = sessionId, text = query, isUser = true)) }
 
-            // 4. Prepare History for LLM Context
-            val historyItems = (_chatHistory.value ?: emptyList())
+            // 4. Prepare Context for Backend
+            val historyItems = updatedListWithUser
                 .filter { !it.isError }
                 .map { HistoryItem(role = if (it.isUser) "user" else "assistant", content = it.text) }
+                .dropLast(1)
 
-            // 5. Network Request
+            // 5. API Call
             try {
                 val response = RetrofitClient.apiService.askQuestion(
                     AskRequest(query = query, history = historyItems)
                 )
                 val answer = response.answer ?: "क्षमा करें, कोई उत्तर नहीं मिला।"
                 
-                // 6. Save AI response to DB -> Observer will show bubble immediately
-                chatDao.insertMessage(LocalChatMessage(sessionId = sessionId, text = answer, isUser = false))
-                
-                // 7. Start Voice
+                // 6. Immediate UI Update for Assistant Bubble
+                val updatedListWithAI = _chatHistory.value?.toMutableList() ?: mutableListOf()
+                updatedListWithAI.add(ChatMessage(answer, false))
+                _chatHistory.postValue(updatedListWithAI)
+
+                // 7. Speak and Save in Parallel
                 ttsManager.speak(answer)
+                launch { chatDao.insertMessage(LocalChatMessage(sessionId = sessionId, text = answer, isUser = false)) }
                 
             } catch (e: Exception) {
                 val errorMsg = "Network error. Please try again."
-                chatDao.insertMessage(LocalChatMessage(sessionId = sessionId, text = errorMsg, isUser = false, isError = true))
+                val updatedListWithError = _chatHistory.value?.toMutableList() ?: mutableListOf()
+                updatedListWithError.add(ChatMessage(errorMsg, false, true))
+                _chatHistory.postValue(updatedListWithError)
                 ttsManager.speak("नेटवर्क त्रुटि।")
-            } finally {
-                _isBotTyping.value = false
             }
         }
     }
@@ -150,6 +148,5 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         super.onCleared()
         speechManager.destroy()
         ttsManager.shutdown()
-        sessionObservationJob?.cancel()
     }
 }
